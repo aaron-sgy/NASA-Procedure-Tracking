@@ -110,7 +110,7 @@ def detect(save_img=False):
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
 
-            overlapping_boxes = []
+            overlapping_detections = []
             
             if len(det):
                 # Calculate IoU for each pair of bounding boxes
@@ -118,9 +118,8 @@ def detect(save_img=False):
                     for b in range(a + 1, len(det)):
                         iou = bbox_iou(det[a][:4], det[b][:4])
                         if iou > 0:  
-                            # If overlap is significant, add to the list
-                            overlapping_boxes.append(det[a][:4])
-                            overlapping_boxes.append(det[b][:4])
+                            overlapping_detections.append(det[a])
+                            overlapping_detections.append(det[b])
 
                 
                 # Rescale boxes from img_size to im0 size
@@ -133,9 +132,13 @@ def detect(save_img=False):
 
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
-                    if not any((bbox_iou(torch.tensor(xyxy), torch.tensor(box)) > 0) for box in overlapping_boxes):
+                    if any((bbox_iou(torch.tensor(xyxy), torch.tensor(box[:4])) > 0) for box in overlapping_detections):
+                        label = f'Overlap: {iou:.2f} | {names[int(cls)]} {conf:.2f}'
+                        plot_one_box(xyxy, im0, label=label, color=[255, 0, 0], line_thickness=1)  # Red color for overlap
+                    else:
                         label = f'{names[int(cls)]} {conf:.2f}'
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
+
                     
                     # if save_txt:  # Write to file
                     #     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
@@ -147,9 +150,9 @@ def detect(save_img=False):
                     #     label = f'{names[int(cls)]} {conf:.2f}'
                     #     plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
 
-                for box in overlapping_boxes:
-                    label = f'Overlap: {iou:.2f}'
-                    plot_one_box(box, im0, label=label, color=[255, 0, 0], line_thickness=1)  # Red color for overlap
+                # for box in overlapping_boxes:
+                #     label = f'Overlap: {iou:.2f}'
+                #     plot_one_box(box, im0, label=label, color=[255, 0, 0], line_thickness=1)  # Red color for overlap
 
 
 
