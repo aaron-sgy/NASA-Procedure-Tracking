@@ -1,0 +1,7 @@
+train: ../bosechoco_dataset/train/images
+val: ../bosechoco_dataset/valid/images
+test: ../bosechoco_dataset/test/images
+ 
+# Classes
+nc: 2  # number of classes
+names: ['choco', 'bose']  # class names

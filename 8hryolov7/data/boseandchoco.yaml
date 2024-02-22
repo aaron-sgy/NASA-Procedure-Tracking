@@ -1,0 +1,6 @@
+train: C:/Users/me/syncthing/_all/UCSB/3-Third-Year/Capstone/all_dataset/obj_train_data/train/images
+val: C:/Users/me/syncthing/_all/UCSB/3-Third-Year/Capstone/all_dataset/obj_train_data/valid/images
+test: C:/Users/me/syncthing/_all/UCSB/3-Third-Year/Capstone/all_dataset/obj_train_data/test/images
+
+nc: 2
+names: ['Bose', 'Choco']
