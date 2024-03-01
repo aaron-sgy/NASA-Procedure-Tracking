@@ -69,6 +69,9 @@ def detect(save_img=False):
     old_img_b = 1
 
     t0 = time.time()
+
+    previous_overlapping_pairs_iou = -1
+    
     for path, img, im0s, vid_cap in dataset:
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -98,6 +101,10 @@ def detect(save_img=False):
         if classify:
             pred = apply_classifier(pred, modelc, img, im0s)
 
+        # parameters for detections loop
+        current_frame_iou = -1
+
+        overlapping_detections = []
         # Process detections
         for i, det in enumerate(pred):  # detections per image
             if webcam:  # batch_size >= 1
@@ -110,18 +117,17 @@ def detect(save_img=False):
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
 
-            overlapping_detections = []
-            
+            # det[i] gives [x1, y1, x2, y2, confidence, class_id]
             if len(det):
                 # Calculate IoU for each pair of bounding boxes
                 for a in range(len(det)):
                     for b in range(a + 1, len(det)):
                         iou = bbox_iou(det[a][:4], det[b][:4])
                         if iou > 0:  
-                            overlapping_detections.append(det[a])
-                            overlapping_detections.append(det[b])
+                            overlapping_detections.append((det[a], det[b], iou))
 
-                
+                overlapping_pairs_count = len(overlapping_detections)
+                    
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
 
@@ -130,11 +136,17 @@ def detect(save_img=False):
                     n = (det[:, -1] == c).sum()  # detections per class
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
-                # Write results
+                # Write Results
                 for *xyxy, conf, cls in reversed(det):
-                    if any((bbox_iou(torch.tensor(xyxy), torch.tensor(box[:4])) > 0) for box in overlapping_detections):
-                        label = f'Overlap: {iou:.2f} | {names[int(cls)]} {conf:.2f}'
-                        plot_one_box(xyxy, im0, label=label, color=[255, 0, 0], line_thickness=1)  # Red color for overlap
+                    xyxy_tensor = torch.tensor(xyxy)
+                    overlap_label = None
+                    for box_a, box_b, iou in overlapping_detections:
+                        if bbox_iou(xyxy_tensor, torch.tensor(box_a[:4])) > 0 or bbox_iou(xyxy_tensor, torch.tensor(box_b[:4])) > 0:
+                            overlap_label = f'Overlap: {iou:.2f} | {names[int(cls)]} {conf:.2f}'
+                            break
+
+                    if overlap_label:
+                        plot_one_box(xyxy, im0, label=overlap_label, color=[255, 0, 0], line_thickness=1)  # Red color for overlap
                     else:
                         label = f'{names[int(cls)]} {conf:.2f}'
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
@@ -153,7 +165,31 @@ def detect(save_img=False):
                 # for box in overlapping_boxes:
                 #     label = f'Overlap: {iou:.2f}'
                 #     plot_one_box(box, im0, label=label, color=[255, 0, 0], line_thickness=1)  # Red color for overlap
+            
+            if overlapping_pairs_count == 1:
+                current_frame_iou = overlapping_detections[0][2]
 
+            if webcam and overlapping_pairs_count == 1:
+                cv2.putText(im0, f'There are {overlapping_pairs_count} pairs of overlapping bounding boxes. Condition Met! Updating.', 
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                
+                if current_frame_iou > previous_overlapping_pairs_iou:
+                    cv2.putText(im0, f'increasing?', 
+                        (10,60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                
+                elif current_frame_iou < previous_overlapping_pairs_iou:
+                    cv2.putText(im0, f'decreasing?', 
+                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                
+                # elif current_frame_iou == previous_overlapping_pairs_iou:
+                #     cv2.putText(im0, f'unchanged?', 
+                #         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    
+                previous_overlapping_pairs_iou = current_frame_iou
+
+            elif webcam and overlapping_pairs_count > 1:
+                cv2.putText(im0, f'There are {overlapping_pairs_count} pairs of overlapping bounding boxes', 
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
 
             # Print time (inference + NMS)
