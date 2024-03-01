@@ -16,6 +16,30 @@ from utils.torch_utils import select_device, load_classifier, time_synchronized,
 
 from utils.general import bbox_iou
 
+import math
+
+def get_box_center(x1, y1, x2, y2):
+    return (x1+x2)/2, (y1+y2)/2
+
+# point1 = (x1, y1)
+# point2 = (x2, y2)
+def get_euclidean_distance(point1, point2):
+    return math.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
+
+# box_coordinates in format [x1, y1, x2, y2]
+def are_they_the_same_detections(box_a_det, box_b_det, threshold=0):
+    center_a = get_box_center(*box_a_det[:4])
+    center_b = get_box_center(*box_b_det[:4])
+
+    distance = get_euclidean_distance(center_a, center_b)
+
+    if box_a_det[5] != box_b_det[5]:
+        return False, distance
+
+    if distance > threshold:
+        return False, distance
+    
+    return True, distance
 
 def detect(save_img=False):
     source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
@@ -69,9 +93,9 @@ def detect(save_img=False):
     old_img_b = 1
 
     t0 = time.time()
-
     previous_overlapping_pairs_iou = -1
-    
+    previous_overlapping_interest = []
+
     for path, img, im0s, vid_cap in dataset:
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -103,8 +127,8 @@ def detect(save_img=False):
 
         # parameters for detections loop
         current_frame_iou = -1
-
         overlapping_detections = []
+ 
         # Process detections
         for i, det in enumerate(pred):  # detections per image
             if webcam:  # batch_size >= 1
@@ -127,7 +151,7 @@ def detect(save_img=False):
                             overlapping_detections.append((det[a], det[b], iou))
 
                 overlapping_pairs_count = len(overlapping_detections)
-                    
+
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
 
@@ -151,36 +175,66 @@ def detect(save_img=False):
                         label = f'{names[int(cls)]} {conf:.2f}'
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
 
-                    
-                    # if save_txt:  # Write to file
-                    #     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                    #     line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
-                    #     with open(txt_path + '.txt', 'a') as f:
-                    #         f.write(('%g ' * len(line)).rstrip() % line + '\n')
+            # check if we should update increasing or decreasing. Should only update when they are the same detections
+            # if new they are not the same detections, should we reset prev_iou?
+            # we need a new function that takes factors into account:
+             #   correct two classes interactions
+              #  iou threshold
 
-                    # if save_img or view_img:  # Add bbox to image
-                    #     label = f'{names[int(cls)]} {conf:.2f}'
-                    #     plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
-
-                # for box in overlapping_boxes:
-                #     label = f'Overlap: {iou:.2f}'
-                #     plot_one_box(box, im0, label=label, color=[255, 0, 0], line_thickness=1)  # Red color for overlap
-            
+            same_detections = False
             if overlapping_pairs_count == 1:
                 current_frame_iou = overlapping_detections[0][2]
 
-            if webcam and overlapping_pairs_count == 1:
+                if len(previous_overlapping_interest) > 0:
+                    curr_detA = overlapping_detections[0][0]
+                    curr_detB = overlapping_detections[0][1]
+
+                    prev_detA = previous_overlapping_interest[0][0]
+                    prev_detB = previous_overlapping_interest[0][1]
+
+                    boolean1 = are_they_the_same_detections(curr_detA, prev_detA, 100)
+                    boolean2 = are_they_the_same_detections(curr_detB, prev_detB, 100)
+
+                    boolean3 = are_they_the_same_detections(curr_detA, prev_detB, 100)
+                    boolean4 = are_they_the_same_detections(curr_detB, prev_detA, 100)
+                    
+                    if (boolean1[0] and boolean2[0]):
+                        print("Yes they are the same detections " + str(boolean1[1]) + " and " + str(boolean2[1]))
+                        same_detections = True
+
+                    elif (boolean3[0] and boolean4[0]):
+                       print("Yes they are the same detections " + str(boolean3[1]) + " and " + str(boolean4[1]))
+                       same_detections = True
+
+                    else:
+                        print("No")
+                        same_detections = False
+                    
+                previous_overlapping_interest = overlapping_detections
+                    
+            # detach complete
+            if overlapping_pairs_count == 0 and previous_overlapping_pairs_iou <= 0.1 and previous_overlapping_pairs_iou > 0:
+                cv2.putText(im0, f'Detachment has been complete for pair {str(names[int(previous_overlapping_interest[0][0][5])])} and {str(names[int(previous_overlapping_interest[0][1][5])])}', 
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+            elif webcam and overlapping_pairs_count == 1:
                 cv2.putText(im0, f'There are {overlapping_pairs_count} pairs of overlapping bounding boxes. Condition Met! Updating.', 
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                 
-                if current_frame_iou > previous_overlapping_pairs_iou:
-                    cv2.putText(im0, f'increasing?', 
+                if current_frame_iou > previous_overlapping_pairs_iou and same_detections:
+                    cv2.putText(im0, f'increasing', 
                         (10,60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                 
-                elif current_frame_iou < previous_overlapping_pairs_iou:
-                    cv2.putText(im0, f'decreasing?', 
+                elif current_frame_iou < previous_overlapping_pairs_iou and same_detections:
+                    cv2.putText(im0, f'decreasing', 
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                 
+                elif not same_detections:
+                    cv2.putText(im0, f'New Procedure Started', 
+                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    
+                    print("new procedure detected")
+
                 # elif current_frame_iou == previous_overlapping_pairs_iou:
                 #     cv2.putText(im0, f'unchanged?', 
                 #         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
@@ -193,7 +247,7 @@ def detect(save_img=False):
 
 
             # Print time (inference + NMS)
-            print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+            # print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
             # Stream results
             if view_img:
