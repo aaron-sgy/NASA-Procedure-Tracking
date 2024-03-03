@@ -128,6 +128,7 @@ def detect(save_img=False):
         # parameters for detections loop
         current_frame_iou = -1
         overlapping_detections = []
+        overlapping_pairs_count = -1
  
         # Process detections
         for i, det in enumerate(pred):  # detections per image
